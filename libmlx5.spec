@@ -1,6 +1,6 @@
 Name: libmlx5
 Version: 1.0.1
-Release: 1%{?dist}
+Release: 3%{?dist}
 Summary: Mellanox Connect-IB InfiniBand HCA Userspace Driver
 Provides: libibverbs-driver.%{_arch}
 Group: System Environment/Libraries
@@ -12,6 +12,7 @@ BuildRequires: libibverbs-devel > 1.1.5
 %ifnarch ia64 %{sparc} %{arm}
 BuildRequires: valgrind-devel
 %endif
+Requires: rdma
 ExcludeArch: s390 s390x
 
 %description
@@ -55,6 +56,14 @@ rm -f %{buildroot}%{_libdir}/libmlx5.{la,so}
 %{_libdir}/libmlx5.a
 
 %changelog
+* Tue Dec 23 2014 Doug Ledford <dledford@redhat.com> - 1.0.2-3
+- Add Requires on rdma
+- Related: bz1164618
+
+* Fri Oct 17 2014 Doug Ledford <dledford@redhat.com> - 1.0.2-1
+- Bump and rebuild against latest libibverbs
+- Related: bz1137044
+
 * Fri Feb 28 2014 Doug Ledford <dledford@redhat.com> - 1.0.1-1
 - Update to latest upstream release
 - Remove files related to setting ports to Ethernet mode as that
