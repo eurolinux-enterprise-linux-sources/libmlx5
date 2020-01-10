@@ -107,6 +107,12 @@
 
 #define HIDDEN		__attribute__((visibility("hidden")))
 
+#ifdef HAVE_FUNC_ATTRIBUTE_ALWAYS_INLINE
+#define ALWAYS_INLINE __attribute__((always_inline))
+#else
+#define ALWAYS_INLINE
+#endif
+
 #define PFX		"mlx5: "
 
 
@@ -117,7 +123,13 @@ enum {
 
 enum {
 	MLX5_MMAP_GET_REGULAR_PAGES_CMD    = 0,
-	MLX5_MMAP_GET_CONTIGUOUS_PAGES_CMD = 1
+	MLX5_MMAP_GET_CONTIGUOUS_PAGES_CMD = 1,
+	MLX5_MMAP_GET_CORE_CLOCK_CMD    = 5
+};
+
+enum {
+	MLX5_CQE_VERSION_V0	= 0,
+	MLX5_CQE_VERSION_V1	= 1,
 };
 
 #define MLX5_CQ_PREFIX "MLX_CQ"
@@ -165,6 +177,12 @@ enum {
 };
 
 enum {
+	MLX5_UIDX_TABLE_SHIFT		= 12,
+	MLX5_UIDX_TABLE_MASK		= (1 << MLX5_UIDX_TABLE_SHIFT) - 1,
+	MLX5_UIDX_TABLE_SIZE		= 1 << (24 - MLX5_UIDX_TABLE_SHIFT),
+};
+
+enum {
 	MLX5_SRQ_TABLE_SHIFT		= 12,
 	MLX5_SRQ_TABLE_MASK		= (1 << MLX5_SRQ_TABLE_SHIFT) - 1,
 	MLX5_SRQ_TABLE_SIZE		= 1 << (24 - MLX5_SRQ_TABLE_SHIFT),
@@ -197,7 +215,6 @@ enum {
 	MLX5_OPCODE_ATOMIC_FA		= 0x12,
 	MLX5_OPCODE_ATOMIC_MASKED_CS	= 0x14,
 	MLX5_OPCODE_ATOMIC_MASKED_FA	= 0x15,
-	MLX5_OPCODE_BIND_MW		= 0x18,
 	MLX5_OPCODE_FMR			= 0x19,
 	MLX5_OPCODE_LOCAL_INVAL		= 0x1b,
 	MLX5_OPCODE_CONFIG_CMD		= 0x1f,
@@ -209,6 +226,7 @@ enum {
 
 	MLX5_CQE_OPCODE_ERROR		= 0x1e,
 	MLX5_CQE_OPCODE_RESIZE		= 0x16,
+	MLX5_OPCODE_UMR			= 0x25,
 };
 
 enum {
@@ -219,6 +237,19 @@ enum {
 	MLX5_INLINE_SEG	= 0x80000000,
 };
 
+enum {
+	MLX5_MAX_PORTS_NUM = 2,
+};
+
+enum {
+	MLX5_CSUM_SUPPORT_RAW_OVER_ETH  = (1 <<  0),
+	/*
+	 * Only report rx checksum when the validation
+	 * is valid.
+	 */
+	MLX5_RX_CSUM_VALID              = (1 << 16),
+};
+
 enum mlx5_alloc_type {
 	MLX5_ALLOC_TYPE_ANON,
 	MLX5_ALLOC_TYPE_HUGE,
@@ -226,6 +257,18 @@ enum mlx5_alloc_type {
 	MLX5_ALLOC_TYPE_PREFER_HUGE,
 	MLX5_ALLOC_TYPE_PREFER_CONTIG,
 	MLX5_ALLOC_TYPE_ALL
+};
+
+enum mlx5_rsc_type {
+	MLX5_RSC_TYPE_QP,
+	MLX5_RSC_TYPE_XSRQ,
+	MLX5_RSC_TYPE_SRQ,
+	MLX5_RSC_TYPE_INVAL,
+};
+
+struct mlx5_resource {
+	enum mlx5_rsc_type	type;
+	uint32_t		rsn;
 };
 
 struct mlx5_device {
@@ -263,6 +306,12 @@ struct mlx5_context {
 	}				srq_table[MLX5_SRQ_TABLE_SIZE];
 	pthread_mutex_t			srq_table_mutex;
 
+	struct {
+		struct mlx5_resource  **table;
+		int                     refcnt;
+	}				uidx_table[MLX5_UIDX_TABLE_SIZE];
+	pthread_mutex_t                 uidx_table_mutex;
+
 	void			       *uar[MLX5_MAX_UAR_PAGES];
 	struct mlx5_spinlock		lock32;
 	struct mlx5_db_page	       *db_list;
@@ -282,6 +331,15 @@ struct mlx5_context {
 	char				hostname[40];
 	struct mlx5_spinlock            hugetlb_lock;
 	struct list_head                hugetlb_list;
+	int				cqe_version;
+	uint8_t				cached_link_layer[MLX5_MAX_PORTS_NUM];
+	int				cached_device_cap_flags;
+	enum ibv_atomic_cap		atomic_cap;
+	struct {
+		uint64_t                offset;
+		uint64_t                mask;
+	} core_clock;
+	void			       *hca_core_clock;
 };
 
 struct mlx5_bitmap {
@@ -318,8 +376,17 @@ enum {
 	MLX5_CQ_ARM_DB	= 1,
 };
 
+enum {
+	MLX5_CQ_FLAGS_RX_CSUM_VALID = 1 << 0,
+	MLX5_CQ_FLAGS_EMPTY_DURING_POLL = 1 << 1,
+	MLX5_CQ_FLAGS_FOUND_CQES = 1 << 2,
+	MLX5_CQ_FLAGS_EXTENDED = 1 << 3,
+	MLX5_CQ_FLAGS_SINGLE_THREADED = 1 << 4,
+};
+
 struct mlx5_cq {
-	struct ibv_cq			ibv_cq;
+	/* ibv_cq should always be subset of ibv_cq_ex */
+	struct ibv_cq_ex		ibv_cq;
 	struct mlx5_buf			buf_a;
 	struct mlx5_buf			buf_b;
 	struct mlx5_buf		       *active_buf;
@@ -338,9 +405,15 @@ struct mlx5_cq {
 	uint64_t			stall_last_count;
 	int				stall_adaptive_enable;
 	int				stall_cycles;
+	struct mlx5_resource		*cur_rsc;
+	struct mlx5_srq			*cur_srq;
+	struct mlx5_cqe64		*cqe64;
+	uint32_t			flags;
+	int			umr_opcode;
 };
 
 struct mlx5_srq {
+	struct mlx5_resource            rsc;  /* This struct must be first */
 	struct verbs_srq		vsrq;
 	struct mlx5_buf			buf;
 	struct mlx5_spinlock		lock;
@@ -374,6 +447,7 @@ struct mlx5_wq {
 	int				wqe_shift;
 	int				offset;
 	void			       *qend;
+	uint32_t			*wr_data;
 };
 
 struct mlx5_bf {
@@ -392,19 +466,27 @@ struct mlx5_mr {
 };
 
 struct mlx5_qp {
+	struct mlx5_resource            rsc; /* This struct must be first */
 	struct verbs_qp			verbs_qp;
-	struct ibv_qp			ibv_qp;
+	struct ibv_qp		       *ibv_qp;
 	struct mlx5_buf                 buf;
+	void				*sq_start;
 	int                             max_inline_data;
 	int                             buf_size;
+	/* For Raw Packet QP, use different buffers for the SQ and RQ */
+	struct mlx5_buf                 sq_buf;
+	int				sq_buf_size;
 	struct mlx5_bf		       *bf;
 
+	uint8_t				fm_cache;
 	uint8_t	                        sq_signal_bits;
 	struct mlx5_wq                  sq;
 
 	uint32_t                       *db;
 	struct mlx5_wq                  rq;
 	int                             wq_sig;
+	uint32_t			qp_cap_cache;
+	int				atomics_enabled;
 };
 
 struct mlx5_av {
@@ -491,7 +573,9 @@ static inline struct mlx5_cq *to_mcq(struct ibv_cq *ibcq)
 
 static inline struct mlx5_srq *to_msrq(struct ibv_srq *ibsrq)
 {
-	return (struct mlx5_srq *)ibsrq;
+	struct verbs_srq *vsrq = (struct verbs_srq *)ibsrq;
+
+	return container_of(vsrq, struct mlx5_srq, vsrq);
 }
 
 static inline struct mlx5_qp *to_mqp(struct ibv_qp *ibqp)
@@ -516,6 +600,16 @@ static inline int max_int(int a, int b)
 	return a > b ? a : b;
 }
 
+static inline struct mlx5_qp *rsc_to_mqp(struct mlx5_resource *rsc)
+{
+	return (struct mlx5_qp *)rsc;
+}
+
+static inline struct mlx5_srq *rsc_to_msrq(struct mlx5_resource *rsc)
+{
+	return (struct mlx5_srq *)rsc;
+}
+
 int mlx5_alloc_buf(struct mlx5_buf *buf, size_t size, int page_size);
 void mlx5_free_buf(struct mlx5_buf *buf);
 int mlx5_alloc_buf_contig(struct mlx5_context *mctx, struct mlx5_buf *buf,
@@ -537,6 +631,12 @@ void mlx5_free_db(struct mlx5_context *context, uint32_t *db);
 
 int mlx5_query_device(struct ibv_context *context,
 		       struct ibv_device_attr *attr);
+int mlx5_query_device_ex(struct ibv_context *context,
+			 const struct ibv_query_device_ex_input *input,
+			 struct ibv_device_attr_ex *attr,
+			 size_t attr_size);
+int mlx5_query_rt_values(struct ibv_context *context,
+			 struct ibv_values_ex *values);
 struct ibv_qp *mlx5_create_qp_ex(struct ibv_context *context,
 				 struct ibv_qp_init_attr_ex *attr);
 int mlx5_query_port(struct ibv_context *context, uint8_t port,
@@ -547,17 +647,27 @@ int mlx5_free_pd(struct ibv_pd *pd);
 
 struct ibv_mr *mlx5_reg_mr(struct ibv_pd *pd, void *addr,
 			   size_t length, int access);
+int mlx5_rereg_mr(struct ibv_mr *mr, int flags, struct ibv_pd *pd, void *addr,
+		  size_t length, int access);
 int mlx5_dereg_mr(struct ibv_mr *mr);
+struct ibv_mw *mlx5_alloc_mw(struct ibv_pd *pd, enum ibv_mw_type);
+int mlx5_dealloc_mw(struct ibv_mw *mw);
+int mlx5_bind_mw(struct ibv_qp *qp, struct ibv_mw *mw,
+		 struct ibv_mw_bind *mw_bind);
 
 struct ibv_cq *mlx5_create_cq(struct ibv_context *context, int cqe,
 			       struct ibv_comp_channel *channel,
 			       int comp_vector);
+struct ibv_cq_ex *mlx5_create_cq_ex(struct ibv_context *context,
+				    struct ibv_cq_init_attr_ex *cq_attr);
+void mlx5_cq_fill_pfns(struct mlx5_cq *cq, const struct ibv_cq_init_attr_ex *cq_attr);
 int mlx5_alloc_cq_buf(struct mlx5_context *mctx, struct mlx5_cq *cq,
 		      struct mlx5_buf *buf, int nent, int cqe_sz);
 int mlx5_free_cq_buf(struct mlx5_context *ctx, struct mlx5_buf *buf);
 int mlx5_resize_cq(struct ibv_cq *cq, int cqe);
 int mlx5_destroy_cq(struct ibv_cq *cq);
 int mlx5_poll_cq(struct ibv_cq *cq, int ne, struct ibv_wc *wc);
+int mlx5_poll_cq_v1(struct ibv_cq *cq, int ne, struct ibv_wc *wc);
 int mlx5_arm_cq(struct ibv_cq *cq, int solicited);
 void mlx5_cq_event(struct ibv_cq *cq);
 void __mlx5_cq_clean(struct mlx5_cq *cq, uint32_t qpn, struct mlx5_srq *srq);
@@ -596,6 +706,8 @@ void mlx5_set_sq_sizes(struct mlx5_qp *qp, struct ibv_qp_cap *cap,
 struct mlx5_qp *mlx5_find_qp(struct mlx5_context *ctx, uint32_t qpn);
 int mlx5_store_qp(struct mlx5_context *ctx, uint32_t qpn, struct mlx5_qp *qp);
 void mlx5_clear_qp(struct mlx5_context *ctx, uint32_t qpn);
+int32_t mlx5_store_uidx(struct mlx5_context *ctx, void *rsc);
+void mlx5_clear_uidx(struct mlx5_context *ctx, uint32_t uidx);
 struct mlx5_srq *mlx5_find_srq(struct mlx5_context *ctx, uint32_t srqn);
 int mlx5_store_srq(struct mlx5_context *ctx, uint32_t srqn,
 		   struct mlx5_srq *srq);
@@ -619,6 +731,16 @@ int mlx5_get_srq_num(struct ibv_srq *srq, uint32_t *srq_num);
 int mlx5_close_xrcd(struct ibv_xrcd *ib_xrcd);
 struct ibv_srq *mlx5_create_srq_ex(struct ibv_context *context,
 				   struct ibv_srq_init_attr_ex *attr);
+
+static inline void *mlx5_find_uidx(struct mlx5_context *ctx, uint32_t uidx)
+{
+	int tind = uidx >> MLX5_UIDX_TABLE_SHIFT;
+
+	if (likely(ctx->uidx_table[tind].refcnt))
+		return ctx->uidx_table[tind].table[uidx & MLX5_UIDX_TABLE_MASK];
+
+	return NULL;
+}
 
 static inline int mlx5_spin_lock(struct mlx5_spinlock *lock)
 {

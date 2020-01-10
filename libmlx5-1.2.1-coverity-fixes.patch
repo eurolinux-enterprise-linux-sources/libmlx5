@@ -1,0 +1,52 @@
+diff --git a/src/mlx5.c b/src/mlx5.c
+index a5f8daf..99221e6 100644
+--- a/src/mlx5.c
++++ b/src/mlx5.c
+@@ -182,7 +182,7 @@ int32_t mlx5_store_uidx(struct mlx5_context *ctx, void *rsc)
+ 
+ 	if (!ctx->uidx_table[tind].refcnt) {
+ 		ctx->uidx_table[tind].table = calloc(MLX5_UIDX_TABLE_MASK + 1,
+-						     sizeof(void *));
++						     sizeof(struct mlx5_resource *));
+ 		if (!ctx->uidx_table[tind].table)
+ 			goto out;
+ 	}
+diff --git a/src/verbs.c b/src/verbs.c
+index 40f66c6..a5ef2d6 100644
+--- a/src/verbs.c
++++ b/src/verbs.c
+@@ -986,7 +986,7 @@ static int mlx5_alloc_qp_buf(struct ibv_context *context,
+ 			return err;
+ 		}
+ 
+-		qp->sq.wr_data = malloc(qp->sq.wqe_cnt * sizeof(qp->sq.wr_data));
++		qp->sq.wr_data = malloc(qp->sq.wqe_cnt * sizeof(*qp->sq.wr_data));
+ 		if (!qp->sq.wr_data) {
+ 			errno = ENOMEM;
+ 			err = -1;
+@@ -1098,7 +1098,6 @@ static int mlx5_cmd_create_qp_ex(struct ibv_context *context,
+ 	struct mlx5_create_qp_ex cmd_ex;
+ 	int ret;
+ 
+-	memset(resp, 0, sizeof(*resp));
+ 	memset(&cmd_ex, 0, sizeof(cmd_ex));
+ 	memcpy(&cmd_ex.ibv_cmd.base, &cmd->ibv_cmd.user_handle,
+ 	       offsetof(typeof(cmd->ibv_cmd), is_srq) +
+@@ -1138,7 +1137,7 @@ struct ibv_qp *create_qp(struct ibv_context *context,
+ 	int				ret;
+ 	struct mlx5_context	       *ctx = to_mctx(context);
+ 	struct ibv_qp		       *ibqp;
+-	uint32_t			usr_idx = 0;
++	int32_t				usr_idx = 0;
+ 	uint32_t			uuar_index;
+ #ifdef MLX5_DEBUG
+ 	FILE *fp = ctx->dbg_fp;
+@@ -1156,6 +1155,8 @@ struct ibv_qp *create_qp(struct ibv_context *context,
+ 	qp->ibv_qp = ibqp;
+ 
+ 	memset(&cmd, 0, sizeof(cmd));
++	memset(&resp, 0, sizeof(resp));
++	memset(&resp_ex, 0, sizeof(resp_ex));
+ 
+ 	qp->wq_sig = qp_sig_enabled();
+ 	if (qp->wq_sig)

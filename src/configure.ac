@@ -1,11 +1,12 @@
 dnl Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.57)
-AC_INIT(libmlx5, 1.0.2, linux-rdma@vger.kernel.org)
+AC_INIT(libmlx5, 1.2.1, linux-rdma@vger.kernel.org)
 AC_CONFIG_SRCDIR([src/mlx5.h])
 AC_CONFIG_AUX_DIR(config)
 AC_CONFIG_HEADER(config.h)
 AM_INIT_AUTOMAKE([foreign])
+AC_CONFIG_MACRO_DIR([m4])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 AC_PROG_LIBTOOL
@@ -29,6 +30,13 @@ AC_ARG_WITH([mlx5_debug],
         [Enable extensive debug prints from libmlx5 (default NO)]))
 if test x$with_mlx5_debug = xyes; then
 	CFLAGS="$CFLAGS -DMLX5_DEBUG"
+fi
+
+AC_ARG_WITH([mw_debug],
+    AC_HELP_STRING([--with-mw_debug],
+        [Enable memory windows extra checks (default NO)]))
+if test x$with_mw_debug = xyes; then
+	CFLAGS="$CFLAGS -DMW_DEBUG"
 fi
 
 CFLAGS="$CFLAGS -Werror"
@@ -83,6 +91,8 @@ AC_CACHE_CHECK(whether ld accepts --version-script, ac_cv_version_script,
     else
         ac_cv_version_script=no
     fi])
+
+AX_GCC_FUNC_ATTRIBUTE([always_inline])
 
 if test $ac_cv_version_script = yes; then
     MLX5_VERSION_SCRIPT='-Wl,--version-script=$(srcdir)/src/mlx5.map'

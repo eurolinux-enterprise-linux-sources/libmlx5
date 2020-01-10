@@ -3,6 +3,9 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
+/* Define to 1 if the system has the `always_inline' function attribute */
+#undef HAVE_FUNC_ATTRIBUTE_ALWAYS_INLINE
+
 /* Define to 1 if you have the `ibv_dofork_range' function. */
 #undef HAVE_IBV_DOFORK_RANGE
 

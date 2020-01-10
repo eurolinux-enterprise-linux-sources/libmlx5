@@ -55,7 +55,15 @@ struct mlx5_alloc_ucontext {
 	__u32				total_num_uuars;
 	__u32				num_low_latency_uuars;
 	__u32				flags;
-	__u32				reserved;
+	__u32				comp_mask;
+	__u8				cqe_version;
+	__u8				reserved0;
+	__u16				reserved1;
+	__u32				reserved2;
+};
+
+enum mlx5_ib_alloc_ucontext_resp_mask {
+	MLX5_IB_ALLOC_UCONTEXT_RESP_MASK_CORE_CLOCK_OFFSET = 1UL << 0,
 };
 
 struct mlx5_alloc_ucontext_resp {
@@ -70,7 +78,13 @@ struct mlx5_alloc_ucontext_resp {
 	__u32				max_recv_wr;
 	__u32				max_srq_recv_wr;
 	__u16				num_ports;
-	__u16				reserved;
+	__u16				reserved1;
+	__u32				comp_mask;
+	__u32				response_length;
+	__u8				cqe_version;
+	__u8				reserved2;
+	__u16				reserved3;
+	__u64				hca_core_clock_offset;
 };
 
 struct mlx5_alloc_pd_resp {
@@ -108,6 +122,33 @@ struct mlx5_create_srq_ex {
 	__u64				buf_addr;
 	__u64				db_addr;
 	__u32				flags;
+	__u32				reserved;
+	__u32                           uidx;
+	__u32                           reserved1;
+};
+
+struct mlx5_create_qp_drv_ex {
+	__u64			buf_addr;
+	__u64			db_addr;
+	__u32			sq_wqe_count;
+	__u32			rq_wqe_count;
+	__u32			rq_wqe_shift;
+	__u32			flags;
+	__u32			uidx;
+	__u32			reserved;
+	/* SQ buffer address - used for Raw Packet QP */
+	__u64			sq_buf_addr;
+};
+
+struct mlx5_create_qp_ex {
+	struct ibv_create_qp_ex	ibv_cmd;
+	struct mlx5_create_qp_drv_ex drv_ex;
+};
+
+struct mlx5_create_qp_resp_ex {
+	struct ibv_create_qp_resp_ex	ibv_resp;
+	__u32				uuar_index;
+	__u32				reserved;
 };
 
 struct mlx5_create_qp {
@@ -118,6 +159,10 @@ struct mlx5_create_qp {
 	__u32				rq_wqe_count;
 	__u32				rq_wqe_shift;
 	__u32				flags;
+	__u32                           uidx;
+	__u32                           reserved;
+	/* SQ buffer address - used for Raw Packet QP */
+	__u64                           sq_buf_addr;
 };
 
 struct mlx5_create_qp_resp {
@@ -137,4 +182,12 @@ struct mlx5_resize_cq_resp {
 	struct ibv_resize_cq_resp	ibv_resp;
 };
 
-#endif /* MLX4_ABI_H */
+struct mlx5_query_device_ex {
+	struct ibv_query_device_ex	ibv_cmd;
+};
+
+struct mlx5_query_device_ex_resp {
+	struct ibv_query_device_resp_ex ibv_resp;
+};
+
+#endif /* MLX5_ABI_H */

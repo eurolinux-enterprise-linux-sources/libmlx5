@@ -79,6 +79,9 @@ struct {
 	HCA(MELLANOX, 4116),	/* ConnectX-4 Virtual Function */
 	HCA(MELLANOX, 4117),	/* ConnectX-4LX */
 	HCA(MELLANOX, 4118),	/* ConnectX-4LX Virtual Function */
+	HCA(MELLANOX, 4119),	/* ConnectX-5, PCIe 3.0 */
+	HCA(MELLANOX, 4120),	/* ConnectX-5 Virtual Function */
+	HCA(MELLANOX, 4121),    /* ConnectX-5, PCIe 4.0 */
 };
 
 uint32_t mlx5_debug_mask = 0;
@@ -90,7 +93,11 @@ static struct ibv_context_ops mlx5_ctx_ops = {
 	.alloc_pd      = mlx5_alloc_pd,
 	.dealloc_pd    = mlx5_free_pd,
 	.reg_mr	       = mlx5_reg_mr,
+	.rereg_mr      = mlx5_rereg_mr,
 	.dereg_mr      = mlx5_dereg_mr,
+	.alloc_mw      = mlx5_alloc_mw,
+	.dealloc_mw    = mlx5_dealloc_mw,
+	.bind_mw       = mlx5_bind_mw,
 	.create_cq     = mlx5_create_cq,
 	.poll_cq       = mlx5_poll_cq,
 	.req_notify_cq = mlx5_arm_cq,
@@ -126,6 +133,81 @@ static int read_number_from_line(const char *line, int *value)
 
 	*value = atoi(ptr);
 	return 0;
+}
+/**
+ * The function looks for the first free user-index in all the
+ * user-index tables. If all are used, returns -1, otherwise
+ * a valid user-index.
+ * In case the reference count of the table is zero, it means the
+ * table is not in use and wasn't allocated yet, therefore the
+ * mlx5_store_uidx allocates the table, and increment the reference
+ * count on the table.
+ */
+static int32_t get_free_uidx(struct mlx5_context *ctx)
+{
+	int32_t tind;
+	int32_t i;
+
+	for (tind = 0; tind < MLX5_UIDX_TABLE_SIZE; tind++) {
+		if (ctx->uidx_table[tind].refcnt < MLX5_UIDX_TABLE_MASK)
+			break;
+	}
+
+	if (tind == MLX5_UIDX_TABLE_SIZE)
+		return -1;
+
+	if (!ctx->uidx_table[tind].refcnt)
+		return tind << MLX5_UIDX_TABLE_SHIFT;
+
+	for (i = 0; i < MLX5_UIDX_TABLE_MASK + 1; i++) {
+		if (!ctx->uidx_table[tind].table[i])
+			break;
+	}
+
+	return (tind << MLX5_UIDX_TABLE_SHIFT) | i;
+}
+
+int32_t mlx5_store_uidx(struct mlx5_context *ctx, void *rsc)
+{
+	int32_t tind;
+	int32_t ret = -1;
+	int32_t uidx;
+
+	pthread_mutex_lock(&ctx->uidx_table_mutex);
+	uidx = get_free_uidx(ctx);
+	if (uidx < 0)
+		goto out;
+
+	tind = uidx >> MLX5_UIDX_TABLE_SHIFT;
+
+	if (!ctx->uidx_table[tind].refcnt) {
+		ctx->uidx_table[tind].table = calloc(MLX5_UIDX_TABLE_MASK + 1,
+						     sizeof(void *));
+		if (!ctx->uidx_table[tind].table)
+			goto out;
+	}
+
+	++ctx->uidx_table[tind].refcnt;
+	ctx->uidx_table[tind].table[uidx & MLX5_UIDX_TABLE_MASK] = rsc;
+	ret = uidx;
+
+out:
+	pthread_mutex_unlock(&ctx->uidx_table_mutex);
+	return ret;
+}
+
+void mlx5_clear_uidx(struct mlx5_context *ctx, uint32_t uidx)
+{
+	int tind = uidx >> MLX5_UIDX_TABLE_SHIFT;
+
+	pthread_mutex_lock(&ctx->uidx_table_mutex);
+
+	if (!--ctx->uidx_table[tind].refcnt)
+		free(ctx->uidx_table[tind].table);
+	else
+		ctx->uidx_table[tind].table[uidx & MLX5_UIDX_TABLE_MASK] = NULL;
+
+	pthread_mutex_unlock(&ctx->uidx_table_mutex);
 }
 
 static int mlx5_is_sandy_bridge(int *num_cores)
@@ -457,6 +539,52 @@ static int single_threaded_app(void)
 	return 0;
 }
 
+static int mlx5_cmd_get_context(struct mlx5_context *context,
+				struct mlx5_alloc_ucontext *req,
+				size_t req_len,
+				struct mlx5_alloc_ucontext_resp *resp,
+				size_t resp_len)
+{
+	if (!ibv_cmd_get_context(&context->ibv_ctx, &req->ibv_req,
+				 req_len, &resp->ibv_resp, resp_len))
+		return 0;
+
+	/* The ibv_cmd_get_context fails in older kernels when passing
+	 * a request length that the kernel doesn't know.
+	 * To avoid breaking compatibility of new libmlx5 and older
+	 * kernels, when ibv_cmd_get_context fails with the full
+	 * request length, we try once again with the legacy length.
+	 */
+	return ibv_cmd_get_context(&context->ibv_ctx, &req->ibv_req,
+				   offsetof(struct mlx5_alloc_ucontext,
+					    cqe_version),
+				   &resp->ibv_resp, resp_len);
+}
+
+static int mlx5_map_internal_clock(struct mlx5_device *mdev,
+				   struct ibv_context *ibv_ctx)
+{
+	struct mlx5_context *context = to_mctx(ibv_ctx);
+	void *hca_clock_page;
+	off_t offset = 0;
+
+	set_command(MLX5_MMAP_GET_CORE_CLOCK_CMD, &offset);
+	hca_clock_page = mmap(NULL, mdev->page_size,
+			      PROT_READ, MAP_SHARED, ibv_ctx->cmd_fd,
+			      mdev->page_size * offset);
+
+	if (hca_clock_page == MAP_FAILED) {
+		fprintf(stderr, PFX
+			"Warning: Timestamp available,\n"
+			"but failed to mmap() hca core clock page.\n");
+		return -1;
+	}
+
+	context->hca_core_clock = hca_clock_page +
+		(context->core_clock.offset & (mdev->page_size - 1));
+	return 0;
+}
+
 static int mlx5_init_context(struct verbs_device *vdev,
 			     struct ibv_context *ctx, int cmd_fd)
 {
@@ -472,6 +600,8 @@ static int mlx5_init_context(struct verbs_device *vdev,
 	off_t				offset;
 	struct mlx5_device	       *mdev;
 	struct verbs_context	       *v_ctx;
+	struct ibv_port_attr		port_attr;
+	struct ibv_device_attr		device_attr;
 
 	mdev = to_mdev(&vdev->device);
 	v_ctx = verbs_get_ctx(ctx);
@@ -515,10 +645,14 @@ static int mlx5_init_context(struct verbs_device *vdev,
 	}
 
 	memset(&req, 0, sizeof(req));
+	memset(&resp, 0, sizeof(resp));
+
 	req.total_num_uuars = tot_uuars;
 	req.num_low_latency_uuars = low_lat_uuars;
-	if (ibv_cmd_get_context(&context->ibv_ctx, &req.ibv_req, sizeof req,
-				&resp.ibv_resp, sizeof resp))
+	req.cqe_version = MLX5_CQE_VERSION_V1;
+
+	if (mlx5_cmd_get_context(context, &req, sizeof(req), &resp,
+				 sizeof(resp)))
 		goto err_free_bf;
 
 	context->max_num_qps		= resp.qp_tab_size;
@@ -533,10 +667,22 @@ static int mlx5_init_context(struct verbs_device *vdev,
 	context->max_recv_wr	= resp.max_recv_wr;
 	context->max_srq_recv_wr = resp.max_srq_recv_wr;
 
+	context->cqe_version = resp.cqe_version;
+	if (context->cqe_version) {
+		if (context->cqe_version == 1)
+			mlx5_ctx_ops.poll_cq = mlx5_poll_cq_v1;
+		else
+			 goto err_free_bf;
+	}
+
 	pthread_mutex_init(&context->qp_table_mutex, NULL);
 	pthread_mutex_init(&context->srq_table_mutex, NULL);
+	pthread_mutex_init(&context->uidx_table_mutex, NULL);
 	for (i = 0; i < MLX5_QP_TABLE_SIZE; ++i)
 		context->qp_table[i].refcnt = 0;
+
+	for (i = 0; i < MLX5_QP_TABLE_SIZE; ++i)
+		context->uidx_table[i].refcnt = 0;
 
 	context->db_list = NULL;
 
@@ -567,6 +713,15 @@ static int mlx5_init_context(struct verbs_device *vdev,
 		context->bfs[j].uuarn = j;
 	}
 
+	context->hca_core_clock = NULL;
+	if (resp.response_length + sizeof(resp.ibv_resp) >=
+	    offsetof(struct mlx5_alloc_ucontext_resp, hca_core_clock_offset) +
+	    sizeof(resp.hca_core_clock_offset) &&
+	    resp.comp_mask & MLX5_IB_ALLOC_UCONTEXT_RESP_MASK_CORE_CLOCK_OFFSET) {
+		context->core_clock.offset = resp.hca_core_clock_offset;
+		mlx5_map_internal_clock(mdev, ctx);
+	}
+
 	mlx5_spinlock_init(&context->lock32);
 
 	context->prefer_bf = get_always_bf();
@@ -583,6 +738,23 @@ static int mlx5_init_context(struct verbs_device *vdev,
 	verbs_set_ctx_op(v_ctx, close_xrcd, mlx5_close_xrcd);
 	verbs_set_ctx_op(v_ctx, create_srq_ex, mlx5_create_srq_ex);
 	verbs_set_ctx_op(v_ctx, get_srq_num, mlx5_get_srq_num);
+	verbs_set_ctx_op(v_ctx, query_device_ex, mlx5_query_device_ex);
+	verbs_set_ctx_op(v_ctx, query_rt_values, mlx5_query_rt_values);
+	verbs_set_ctx_op(v_ctx, ibv_create_flow, ibv_cmd_create_flow);
+	verbs_set_ctx_op(v_ctx, ibv_destroy_flow, ibv_cmd_destroy_flow);
+	verbs_set_ctx_op(v_ctx, create_cq_ex, mlx5_create_cq_ex);
+
+	memset(&device_attr, 0, sizeof(device_attr));
+	if (!mlx5_query_device(ctx, &device_attr)) {
+		context->cached_device_cap_flags = device_attr.device_cap_flags;
+		context->atomic_cap = device_attr.atomic_cap;
+	}
+
+	for (j = 0; j < min(MLX5_MAX_PORTS_NUM, context->num_ports); ++j) {
+		memset(&port_attr, 0, sizeof(port_attr));
+		if (!mlx5_query_port(ctx, j + 1, &port_attr))
+			context->cached_link_layer[j] = port_attr.link_layer;
+	}
 
 	return 0;
 
@@ -595,7 +767,6 @@ err_free:
 			munmap(context->uar[i], page_size);
 	}
 	close_debug_file(context);
-	free(context);
 	return errno;
 }
 
@@ -611,6 +782,9 @@ static void mlx5_cleanup_context(struct verbs_device *device,
 		if (context->uar[i])
 			munmap(context->uar[i], page_size);
 	}
+	if (context->hca_core_clock)
+		munmap(context->hca_core_clock - context->core_clock.offset,
+		       page_size);
 	close_debug_file(context);
 }
 

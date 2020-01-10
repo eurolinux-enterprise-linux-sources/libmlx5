@@ -37,6 +37,7 @@ enum {
 	MLX5_WQE_CTRL_CQ_UPDATE	= 2 << 2,
 	MLX5_WQE_CTRL_SOLICITED	= 1 << 1,
 	MLX5_WQE_CTRL_FENCE	= 4 << 5,
+	MLX5_WQE_CTRL_INITIATOR_SMALL_FENCE = 1 << 5,
 };
 
 enum {
@@ -60,6 +61,11 @@ struct mlx5_wqe_data_seg {
 	uint64_t		addr;
 };
 
+struct mlx5_sg_copy_ptr {
+	int	index;
+	int	offset;
+};
+
 struct mlx5_eqe_comp {
 	uint32_t	reserved[6];
 	uint32_t	cqn;
@@ -70,27 +76,24 @@ struct mlx5_eqe_qp_srq {
 	uint32_t	qp_srq_n;
 };
 
-
-struct mlx5_wqe_fmr_seg {
-	uint32_t	flags;
-	uint32_t	mem_key;
-	uint64_t	buf_list;
-	uint64_t	start_addr;
-	uint64_t	reg_len;
-	uint32_t	offset;
-	uint32_t	page_size;
-	uint32_t	reserved[2];
+enum {
+	MLX5_ETH_L2_INLINE_HEADER_SIZE	= 18,
 };
 
-struct mlx4_wqe_fmr_seg {
-	uint32_t	flags;
-	uint32_t	mem_key;
-	uint64_t	buf_list;
-	uint64_t	start_addr;
-	uint64_t	reg_len;
-	uint32_t	offset;
-	uint32_t	page_size;
-	uint32_t	reserved[2];
+enum {
+	MLX5_ETH_WQE_L3_CSUM = (1 << 6),
+	MLX5_ETH_WQE_L4_CSUM = (1 << 7),
+};
+
+struct mlx5_wqe_eth_seg {
+	uint32_t	rsvd0;
+	uint8_t		cs_flags;
+	uint8_t		rsvd1;
+	uint16_t	mss;
+	uint32_t	rsvd2;
+	uint16_t	inline_hdr_sz;
+	uint8_t		inline_hdr_start[2];
+	uint8_t		inline_hdr[16];
 };
 
 struct mlx5_wqe_ctrl_seg {
@@ -152,13 +155,74 @@ struct mlx5_wqe_inl_data_seg {
 	uint32_t	byte_count;
 };
 
+enum {
+	MLX5_WQE_UMR_CTRL_FLAG_INLINE =			1 << 7,
+	MLX5_WQE_UMR_CTRL_FLAG_CHECK_FREE =		1 << 5,
+	MLX5_WQE_UMR_CTRL_FLAG_TRNSLATION_OFFSET =	1 << 4,
+	MLX5_WQE_UMR_CTRL_FLAG_CHECK_QPN =		1 << 3,
+};
+
+enum {
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_LEN			= 1 << 0,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_START_ADDR		= 1 << 6,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_MKEY		= 1 << 13,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_QPN			= 1 << 14,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_ACCESS_LOCAL_WRITE	= 1 << 18,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_ACCESS_REMOTE_READ	= 1 << 19,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_ACCESS_REMOTE_WRITE	= 1 << 20,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_ACCESS_ATOMIC	= 1 << 21,
+	MLX5_WQE_UMR_CTRL_MKEY_MASK_FREE		= 1 << 29,
+};
+
 struct mlx5_wqe_umr_ctrl_seg {
 	uint8_t		flags;
 	uint8_t		rsvd0[3];
 	uint16_t	klm_octowords;
-	uint16_t	bsf_octowords;
+	uint16_t	translation_offset;
 	uint64_t	mkey_mask;
 	uint8_t		rsvd1[32];
+};
+
+struct mlx5_wqe_umr_klm_seg {
+	/* up to 2GB */
+	uint32_t	byte_count;
+	uint32_t	mkey;
+	uint64_t	address;
+};
+
+union mlx5_wqe_umr_inline_seg {
+	struct mlx5_wqe_umr_klm_seg	klm;
+};
+
+enum {
+	MLX5_WQE_MKEY_CONTEXT_FREE = 1 << 6
+};
+
+enum {
+	MLX5_WQE_MKEY_CONTEXT_ACCESS_FLAGS_ATOMIC = 1 << 6,
+	MLX5_WQE_MKEY_CONTEXT_ACCESS_FLAGS_REMOTE_WRITE = 1 << 5,
+	MLX5_WQE_MKEY_CONTEXT_ACCESS_FLAGS_REMOTE_READ = 1 << 4,
+	MLX5_WQE_MKEY_CONTEXT_ACCESS_FLAGS_LOCAL_WRITE = 1 << 3,
+	MLX5_WQE_MKEY_CONTEXT_ACCESS_FLAGS_LOCAL_READ = 1 << 2
+};
+
+struct mlx5_wqe_mkey_context_seg {
+	uint8_t		free;
+	uint8_t		reserved1;
+	uint8_t		access_flags;
+	uint8_t		sf;
+	uint32_t	qpn_mkey;
+	uint32_t	reserved2;
+	uint32_t	flags_pd;
+	uint64_t	start_addr;
+	uint64_t	len;
+	uint32_t	bsf_octword_size;
+	uint32_t	reserved3[4];
+	uint32_t	translations_octword_size;
+	uint8_t		reserved4[3];
+	uint8_t		log_page_size;
+	uint32_t	reserved;
+	union mlx5_wqe_umr_inline_seg inseg[0];
 };
 
 struct mlx5_seg_set_psv {
