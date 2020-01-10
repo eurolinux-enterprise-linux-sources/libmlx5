@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.57)
-AC_INIT(libmlx5, 1.0.1, linux-rdma@vger.kernel.org)
+AC_INIT(libmlx5, 1.0.2, linux-rdma@vger.kernel.org)
 AC_CONFIG_SRCDIR([src/mlx5.h])
 AC_CONFIG_AUX_DIR(config)
 AC_CONFIG_HEADER(config.h)
@@ -59,6 +59,8 @@ AC_C_CONST
 AC_CHECK_SIZEOF(long)
 
 dnl Checks for library functions
+AC_CHECK_FUNC(verbs_register_driver, [],
+	AC_MSG_ERROR([verbs_register_driver() not found.  libmlx5 requires libibverbs >= 1.1.8.]))
 AC_CHECK_FUNC(ibv_read_sysfs_file, [],
     AC_MSG_ERROR([ibv_read_sysfs_file() not found.  libmlx5 requires libibverbs >= 1.0.3.]))
 AC_CHECK_FUNCS(ibv_dontfork_range ibv_dofork_range ibv_register_driver)

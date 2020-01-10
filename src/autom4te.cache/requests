@@ -36,7 +36,7 @@
                         '/usr/share/aclocal-1.11/strip.m4',
                         '/usr/share/aclocal-1.11/substnot.m4',
                         '/usr/share/aclocal-1.11/tar.m4',
-                        'configure.in'
+                        'configure.ac'
                       ],
                       {
                         'AM_ENABLE_STATIC' => 1,
@@ -224,7 +224,7 @@
                       [
                         '/usr/share/autoconf/autoconf/autoconf.m4f',
                         'aclocal.m4',
-                        'configure.in'
+                        'configure.ac'
                       ],
                       {
                         '_LT_AC_TAGCONFIG' => 1,

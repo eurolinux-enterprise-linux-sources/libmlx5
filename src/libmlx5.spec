@@ -1,15 +1,15 @@
 Name: libmlx5
-Version: 1.0.1
+Version: 1.0.2
 Release: 1
 Summary: Mellanox ConnectX-IB InfiniBand HCA Userspace Driver
 
 Group: System Environment/Libraries
 License: GPLv2 or BSD
 Url: http://openfabrics.org/
-Source: http://www.openfabrics.org/downloads/libmlx5-1.0.1.tar.gz
+Source: http://www.openfabrics.org/downloads/libmlx5-1.0.2.tar.gz
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
-BuildRequires: libibverbs-devel >= 1.1-0.1.rc2
+BuildRequires: libibverbs-devel >= 1.1.8
 
 %description
 libmlx5 provides a device-specific userspace driver for Mellanox
@@ -26,7 +26,7 @@ Static version of libmlx5 that may be linked directly to an
 application, which may be useful for debugging.
 
 %prep
-%setup -q -n %{name}-1.0.1
+%setup -q -n %{name}-1.0.2
 
 %build
 %configure
